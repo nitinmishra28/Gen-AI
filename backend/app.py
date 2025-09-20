@@ -1383,687 +1383,753 @@
 
 
 
+# Working code 
 
 
 
+# import os
+# import re
+# import json
+# import hashlib
+# import logging
+# import time
+# import PyPDF2
+# from io import BytesIO
+# from datetime import datetime, timezone
+# from flask import Flask, request, jsonify
+# from flask_cors import CORS
+# from openai import OpenAI, RateLimitError
+# from typing import Dict, List, Any
+# from requests.exceptions import RequestException
+# from tenacity import retry, stop_after_attempt, wait_exponential, wait_random, retry_if_exception_type
+# from dotenv import load_dotenv
+# import pdfplumber
+# import docx
 
-import os
-import re
-import json
-import hashlib
-import logging
-import time
-import PyPDF2
-from io import BytesIO
-from datetime import datetime, timezone
-from flask import Flask, request, jsonify
-from flask_cors import CORS
-from openai import OpenAI, RateLimitError
-from typing import Dict, List, Any
-from requests.exceptions import RequestException
-from tenacity import retry, stop_after_attempt, wait_exponential, wait_random, retry_if_exception_type
-from dotenv import load_dotenv
-import pdfplumber
-import docx
+# # Load environment variables
+# load_dotenv()
 
-# Load environment variables
-load_dotenv()
+# OPENAI_API_KEY = os.getenv('OPENAI_API_KEY')
+# OPENAI_MODEL = os.getenv('OPENAI_MODEL', 'gpt-4-turbo')
+# USE_MOCK = os.getenv('USE_MOCK', 'False').lower() == 'true'
+# CACHE_DIR = os.getenv('CACHE_DIR', 'cache')
+# MAX_INPUT_CHARS = int(os.getenv('MAX_INPUT_CHARS', '50000'))
 
-OPENAI_API_KEY = os.getenv('OPENAI_API_KEY')
-OPENAI_MODEL = os.getenv('OPENAI_MODEL', 'gpt-4-turbo')
-USE_MOCK = os.getenv('USE_MOCK', 'False').lower() == 'true'
-CACHE_DIR = os.getenv('CACHE_DIR', 'cache')
-MAX_INPUT_CHARS = int(os.getenv('MAX_INPUT_CHARS', '50000'))
+# app = Flask(__name__)
+# CORS(app)
 
-app = Flask(__name__)
-CORS(app)
+# logging.basicConfig(
+#     level=logging.INFO,
+#     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+# )
+# logger = logging.getLogger(__name__)
 
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-)
-logger = logging.getLogger(__name__)
-
-# --- Enhanced File Validation ---
-def validate_file_upload(file, valid_extensions=('.pdf', '.docx', '.doc', '.txt'), max_size_mb=10):
-    """Enhanced file validation with content checking."""
-    file.seek(0, 2)  # End
-    size = file.tell()
-    file.seek(0)
+# # --- Enhanced File Validation ---
+# def validate_file_upload(file, valid_extensions=('.pdf', '.docx', '.doc', '.txt'), max_size_mb=10):
+#     """Enhanced file validation with content checking."""
+#     file.seek(0, 2)  # End
+#     size = file.tell()
+#     file.seek(0)
     
-    if size > max_size_mb * 1024 * 1024:
-        raise ValueError(f"File too large. Maximum size is {max_size_mb}MB.")
+#     if size > max_size_mb * 1024 * 1024:
+#         raise ValueError(f"File too large. Maximum size is {max_size_mb}MB.")
     
-    if size == 0:
-        raise ValueError("File is empty.")
+#     if size == 0:
+#         raise ValueError("File is empty.")
     
-    ext = os.path.splitext(file.filename)[1].lower()
-    if ext not in valid_extensions:
-        raise ValueError(f"Unsupported file extension: {ext}. Supported: {', '.join(valid_extensions)}")
+#     ext = os.path.splitext(file.filename)[1].lower()
+#     if ext not in valid_extensions:
+#         raise ValueError(f"Unsupported file extension: {ext}. Supported: {', '.join(valid_extensions)}")
     
-    # Read file header for validation
-    header = file.read(min(512, size))  # Read first 512 bytes or entire file if smaller
-    file.seek(0)
+#     # Read file header for validation
+#     header = file.read(min(512, size))  # Read first 512 bytes or entire file if smaller
+#     file.seek(0)
     
-    if ext == '.pdf':
-        if not header.startswith(b'%PDF-'):
-            raise ValueError("Invalid PDF file format - missing PDF header.")
-    elif ext == '.docx':
-        if not header.startswith(b'PK\x03\x04'):
-            raise ValueError("Invalid DOCX file format.")
-    elif ext == '.doc':
-        if not header.startswith(b'\xd0\xcf\x11\xe0'):
-            raise ValueError("Invalid DOC file format.")
+#     if ext == '.pdf':
+#         if not header.startswith(b'%PDF-'):
+#             raise ValueError("Invalid PDF file format - missing PDF header.")
+#     elif ext == '.docx':
+#         if not header.startswith(b'PK\x03\x04'):
+#             raise ValueError("Invalid DOCX file format.")
+#     elif ext == '.doc':
+#         if not header.startswith(b'\xd0\xcf\x11\xe0'):
+#             raise ValueError("Invalid DOC file format.")
 
-# --- CV Analyzer Class ---
-class CVAnalyzer:
-    def __init__(self):
-        if not OPENAI_API_KEY and not USE_MOCK:
-            raise ValueError("OPENAI_API_KEY not set and mock mode disabled.")
-        self.client = OpenAI(api_key=OPENAI_API_KEY) if OPENAI_API_KEY else None
-        self.use_mock = USE_MOCK
-        logger.info(f"CVAnalyzer initialized with model {OPENAI_MODEL}, Mock: {self.use_mock}")
+# # --- CV Analyzer Class ---
+# class CVAnalyzer:
+#     def __init__(self):
+#         if not OPENAI_API_KEY and not USE_MOCK:
+#             raise ValueError("OPENAI_API_KEY not set and mock mode disabled.")
+#         self.client = OpenAI(api_key=OPENAI_API_KEY) if OPENAI_API_KEY else None
+#         self.use_mock = USE_MOCK
+#         logger.info(f"CVAnalyzer initialized with model {OPENAI_MODEL}, Mock: {self.use_mock}")
 
-    def _mock_analysis(self):
-        """Mock analysis for testing purposes."""
-        return {
-            "overall_score": 85,
-            "requirements_score": 80,
-            "wishes_score": 90,
-            "requirements": [
-                {
-                    "id": "req_1",
-                    "type": "require",
-                    "title": "Python Development",
-                    "description": "Experience with Python programming",
-                    "match": True,
-                    "percentage": 85,
-                    "explanation": "Strong Python experience evident in CV"
-                }
-            ],
-            "wishes": [
-                {
-                    "id": "wish_1",
-                    "type": "wish",
-                    "title": "Machine Learning",
-                    "description": "Knowledge of ML frameworks",
-                    "match": True,
-                    "percentage": 75,
-                    "explanation": "Some ML experience mentioned"
-                }
-            ]
-        }
+#     def _mock_analysis(self):
+#         """Mock analysis for testing purposes."""
+#         return {
+#             "overall_score": 85,
+#             "requirements_score": 80,
+#             "wishes_score": 90,
+#             "requirements": [
+#                 {
+#                     "id": "req_1",
+#                     "type": "require",
+#                     "title": "Python Development",
+#                     "description": "Experience with Python programming",
+#                     "match": True,
+#                     "percentage": 85,
+#                     "explanation": "Strong Python experience evident in CV"
+#                 }
+#             ],
+#             "wishes": [
+#                 {
+#                     "id": "wish_1",
+#                     "type": "wish",
+#                     "title": "Machine Learning",
+#                     "description": "Knowledge of ML frameworks",
+#                     "match": True,
+#                     "percentage": 75,
+#                     "explanation": "Some ML experience mentioned"
+#                 }
+#             ]
+#         }
 
-    def _sanitize_and_truncate_text(self, text: str) -> str:
-        """Sanitize and truncate text input."""
-        # Remove HTML tags
-        text = re.sub(r'<[^>]+>', '', text)
-        # Keep only safe characters
-        text = re.sub(r'[^\w\s\-.,!?@#&()"\':;/\\]', '', text)
+#     def _sanitize_and_truncate_text(self, text: str) -> str:
+#         """Sanitize and truncate text input."""
+#         # Remove HTML tags
+#         text = re.sub(r'<[^>]+>', '', text)
+#         # Keep only safe characters
+#         text = re.sub(r'[^\w\s\-.,!?@#&()"\':;/\\]', '', text)
         
-        if len(text) > MAX_INPUT_CHARS:
-            logger.warning(f"Input text truncated to {MAX_INPUT_CHARS} characters.")
-            return text[:MAX_INPUT_CHARS]
-        return text
+#         if len(text) > MAX_INPUT_CHARS:
+#             logger.warning(f"Input text truncated to {MAX_INPUT_CHARS} characters.")
+#             return text[:MAX_INPUT_CHARS]
+#         return text
 
-    def extract_text_from_file(self, file_content: bytes, filename: str) -> str:
-        """Extract text from various file formats."""
-        logger.debug(f"Extracting text from {filename}")
-        ext = os.path.splitext(filename)[1].lower()
+#     def extract_text_from_file(self, file_content: bytes, filename: str) -> str:
+#         """Extract text from various file formats."""
+#         logger.debug(f"Extracting text from {filename}")
+#         ext = os.path.splitext(filename)[1].lower()
         
-        try:
-            if ext == '.pdf':
-                return self._extract_from_pdf(file_content)
-            elif ext in ['.doc', '.docx']:
-                return self._extract_from_docx(file_content)
-            elif ext == '.txt':
-                return file_content.decode('utf-8', errors='ignore')
-            else:
-                raise ValueError(f"Unsupported file type: {ext}")
-        except Exception as e:
-            logger.error(f"Error extracting text from {filename}: {e}", exc_info=True)
-            raise Exception(f"Could not read '{filename}'. {str(e)}") from e
+#         try:
+#             if ext == '.pdf':
+#                 return self._extract_from_pdf(file_content)
+#             elif ext in ['.doc', '.docx']:
+#                 return self._extract_from_docx(file_content)
+#             elif ext == '.txt':
+#                 return file_content.decode('utf-8', errors='ignore')
+#             else:
+#                 raise ValueError(f"Unsupported file type: {ext}")
+#         except Exception as e:
+#             logger.error(f"Error extracting text from {filename}: {e}", exc_info=True)
+#             raise Exception(f"Could not read '{filename}'. {str(e)}") from e
 
-    def _extract_from_pdf(self, file_content: bytes) -> str:
-        """Enhanced PDF extraction with multiple fallback methods."""
-        text = ""
+#     def _extract_from_pdf(self, file_content: bytes) -> str:
+#         """Enhanced PDF extraction with multiple fallback methods."""
+#         text = ""
         
-        # Method 1: Try pdfplumber first (with corrected encryption check)
-        try:
-            with pdfplumber.open(BytesIO(file_content)) as pdf:
-                # Corrected encryption check for newer pdfplumber versions
-                try:
-                    # Try to access first page to check if encrypted
-                    if pdf.pages and len(pdf.pages) > 0:
-                        # Test access to first page
-                        test_page = pdf.pages[0]
-                        test_page.extract_text()  # This will fail if encrypted
-                    else:
-                        raise ValueError("PDF has no readable pages.")
-                except Exception as encrypt_check:
-                    if any(x in str(encrypt_check).lower() for x in ['password', 'encrypted', 'secured', 'decrypt']):
-                        raise ValueError("The PDF is password-protected and cannot be read.")
+#         # Method 1: Try pdfplumber first (with corrected encryption check)
+#         try:
+#             with pdfplumber.open(BytesIO(file_content)) as pdf:
+#                 # Corrected encryption check for newer pdfplumber versions
+#                 try:
+#                     # Try to access first page to check if encrypted
+#                     if pdf.pages and len(pdf.pages) > 0:
+#                         # Test access to first page
+#                         test_page = pdf.pages[0]
+#                         test_page.extract_text()  # This will fail if encrypted
+#                     else:
+#                         raise ValueError("PDF has no readable pages.")
+#                 except Exception as encrypt_check:
+#                     if any(x in str(encrypt_check).lower() for x in ['password', 'encrypted', 'secured', 'decrypt']):
+#                         raise ValueError("The PDF is password-protected and cannot be read.")
                 
-                # Extract text from all pages
-                for page_num, page in enumerate(pdf.pages):
-                    try:
-                        extracted = page.extract_text()
-                        if extracted:
-                            text += extracted + "\n"
-                    except Exception as page_error:
-                        logger.warning(f"Failed to extract text from page {page_num + 1}: {page_error}")
-                        continue
+#                 # Extract text from all pages
+#                 for page_num, page in enumerate(pdf.pages):
+#                     try:
+#                         extracted = page.extract_text()
+#                         if extracted:
+#                             text += extracted + "\n"
+#                     except Exception as page_error:
+#                         logger.warning(f"Failed to extract text from page {page_num + 1}: {page_error}")
+#                         continue
                 
-                if text.strip():
-                    return text
+#                 if text.strip():
+#                     return text
                         
-        except Exception as e:
-            logger.debug(f"pdfplumber failed: {e}")  # Changed to debug to reduce log noise
-            if any(x in str(e).lower() for x in ['password', 'encrypted', 'secured', 'decrypt']):
-                raise ValueError("The PDF is password-protected and cannot be read.")
+#         except Exception as e:
+#             logger.debug(f"pdfplumber failed: {e}")  # Changed to debug to reduce log noise
+#             if any(x in str(e).lower() for x in ['password', 'encrypted', 'secured', 'decrypt']):
+#                 raise ValueError("The PDF is password-protected and cannot be read.")
         
-        # Method 2: Try PyPDF2 as fallback
-        try:
-            file_content_copy = BytesIO(file_content)
-            pdf_reader = PyPDF2.PdfReader(file_content_copy)
+#         # Method 2: Try PyPDF2 as fallback
+#         try:
+#             file_content_copy = BytesIO(file_content)
+#             pdf_reader = PyPDF2.PdfReader(file_content_copy)
             
-            # Check encryption with PyPDF2
-            if pdf_reader.is_encrypted:
-                raise ValueError("The PDF is password-protected and cannot be read.")
+#             # Check encryption with PyPDF2
+#             if pdf_reader.is_encrypted:
+#                 raise ValueError("The PDF is password-protected and cannot be read.")
             
-            for page_num, page in enumerate(pdf_reader.pages):
-                try:
-                    extracted = page.extract_text()
-                    if extracted:
-                        text += extracted + "\n"
-                except Exception as page_error:
-                    logger.warning(f"PyPDF2 page {page_num + 1} extraction failed: {page_error}")
-                    continue
+#             for page_num, page in enumerate(pdf_reader.pages):
+#                 try:
+#                     extracted = page.extract_text()
+#                     if extracted:
+#                         text += extracted + "\n"
+#                 except Exception as page_error:
+#                     logger.warning(f"PyPDF2 page {page_num + 1} extraction failed: {page_error}")
+#                     continue
             
-            if text.strip():
-                logger.info("PDF extracted using PyPDF2 fallback")
-                return text
+#             if text.strip():
+#                 logger.info("PDF extracted using PyPDF2 fallback")
+#                 return text
                 
-        except Exception as e:
-            logger.warning(f"PyPDF2 fallback failed: {e}")
-            if any(x in str(e).lower() for x in ['password', 'encrypted', 'secured', 'decrypt']):
-                raise ValueError("The PDF is password-protected and cannot be read.")
+#         except Exception as e:
+#             logger.warning(f"PyPDF2 fallback failed: {e}")
+#             if any(x in str(e).lower() for x in ['password', 'encrypted', 'secured', 'decrypt']):
+#                 raise ValueError("The PDF is password-protected and cannot be read.")
         
-        # If all methods failed but no text was extracted
-        if not text.strip():
-            raise ValueError("Could not extract any text from the PDF. The file may be image-based, corrupted, or in an unsupported format.")
+#         # If all methods failed but no text was extracted
+#         if not text.strip():
+#             raise ValueError("Could not extract any text from the PDF. The file may be image-based, corrupted, or in an unsupported format.")
         
-        return text
+#         return text
 
-    def _extract_from_docx(self, file_content: bytes) -> str:
-        """Enhanced DOCX extraction with better error handling."""
-        try:
-            doc = docx.Document(BytesIO(file_content))
+#     def _extract_from_docx(self, file_content: bytes) -> str:
+#         """Enhanced DOCX extraction with better error handling."""
+#         try:
+#             doc = docx.Document(BytesIO(file_content))
             
-            # Extract text from paragraphs
-            paragraphs = []
-            for para in doc.paragraphs:
-                if para.text.strip():
-                    paragraphs.append(para.text)
+#             # Extract text from paragraphs
+#             paragraphs = []
+#             for para in doc.paragraphs:
+#                 if para.text.strip():
+#                     paragraphs.append(para.text)
             
-            # Extract text from tables
-            table_text = []
-            for table in doc.tables:
-                for row in table.rows:
-                    row_text = []
-                    for cell in row.cells:
-                        if cell.text.strip():
-                            row_text.append(cell.text.strip())
-                    if row_text:
-                        table_text.append(" | ".join(row_text))
+#             # Extract text from tables
+#             table_text = []
+#             for table in doc.tables:
+#                 for row in table.rows:
+#                     row_text = []
+#                     for cell in row.cells:
+#                         if cell.text.strip():
+#                             row_text.append(cell.text.strip())
+#                     if row_text:
+#                         table_text.append(" | ".join(row_text))
             
-            # Combine all text
-            all_text = paragraphs + table_text
+#             # Combine all text
+#             all_text = paragraphs + table_text
             
-            if not all_text:
-                raise ValueError("DOCX file appears empty or contains no readable text.")
+#             if not all_text:
+#                 raise ValueError("DOCX file appears empty or contains no readable text.")
             
-            return "\n".join(all_text)
+#             return "\n".join(all_text)
             
-        except Exception as e:
-            if "corrupted" in str(e).lower() or "invalid" in str(e).lower():
-                raise ValueError("The DOCX file appears to be corrupted and cannot be processed.")
-            raise Exception("Failed to process DOCX file.") from e
+#         except Exception as e:
+#             if "corrupted" in str(e).lower() or "invalid" in str(e).lower():
+#                 raise ValueError("The DOCX file appears to be corrupted and cannot be processed.")
+#             raise Exception("Failed to process DOCX file.") from e
 
-    @retry(
-        stop=stop_after_attempt(3),
-        wait=wait_exponential(multiplier=1, min=4, max=30) + wait_random(0, 3),
-        retry=retry_if_exception_type((RateLimitError, json.JSONDecodeError, RequestException)),
-        reraise=True
-    )
-    def _call_openai(self, prompt: str, system_content: str, temperature: float = 0.2, use_json_mode: bool = False) -> str:
-        """Call OpenAI API with retry logic."""
-        if self.use_mock:
-            return '{"mock": "response for testing"}'
+#     @retry(
+#         stop=stop_after_attempt(3),
+#         wait=wait_exponential(multiplier=1, min=4, max=30) + wait_random(0, 3),
+#         retry=retry_if_exception_type((RateLimitError, json.JSONDecodeError, RequestException)),
+#         reraise=True
+#     )
+#     def _call_openai(self, prompt: str, system_content: str, temperature: float = 0.2, use_json_mode: bool = False) -> str:
+#         """Call OpenAI API with retry logic."""
+#         if self.use_mock:
+#             return '{"mock": "response for testing"}'
             
-        logger.debug(f"Calling OpenAI {OPENAI_MODEL}")
-        params = {
-            "model": OPENAI_MODEL,
-            "messages": [
-                {"role": "system", "content": system_content},
-                {"role": "user", "content": prompt}
-            ],
-            "temperature": temperature,
-        }
-        if use_json_mode:
-            params["response_format"] = {"type": "json_object"}
+#         logger.debug(f"Calling OpenAI {OPENAI_MODEL}")
+#         params = {
+#             "model": OPENAI_MODEL,
+#             "messages": [
+#                 {"role": "system", "content": system_content},
+#                 {"role": "user", "content": prompt}
+#             ],
+#             "temperature": temperature,
+#         }
+#         if use_json_mode:
+#             params["response_format"] = {"type": "json_object"}
         
-        response = self.client.chat.completions.create(**params)
-        return response.choices[0].message.content.strip()
+#         response = self.client.chat.completions.create(**params)
+#         return response.choices[0].message.content.strip()
 
-    def _validate_analysis_result(self, result: Dict) -> Dict:
-        """Validate the structure and content of analysis results."""
-        required_fields = ['overall_score', 'requirements_score', 'wishes_score', 'requirements', 'wishes']
+#     def _validate_analysis_result(self, result: Dict) -> Dict:
+#         """Validate the structure and content of analysis results."""
+#         required_fields = ['overall_score', 'requirements_score', 'wishes_score', 'requirements', 'wishes']
         
-        for field in required_fields:
-            if field not in result:
-                raise ValueError(f"Missing required field: {field} in analysis result.")
+#         for field in required_fields:
+#             if field not in result:
+#                 raise ValueError(f"Missing required field: {field} in analysis result.")
         
-        # Validate score ranges
-        for key in ['overall_score', 'requirements_score', 'wishes_score']:
-            val = result[key]
-            if not isinstance(val, (float, int)) or not 0 <= val <= 100:
-                raise ValueError(f"Invalid score value for {key}: {val}")
+#         # Validate score ranges
+#         for key in ['overall_score', 'requirements_score', 'wishes_score']:
+#             val = result[key]
+#             if not isinstance(val, (float, int)) or not 0 <= val <= 100:
+#                 raise ValueError(f"Invalid score value for {key}: {val}")
         
-        return result
+#         return result
 
-    def _get_cache_key(self, cv_text: str, assignment_text: str) -> str:
-        """Generate cache key for CV-assignment pair."""
-        return hashlib.sha256((cv_text + assignment_text).encode()).hexdigest()
+#     def _get_cache_key(self, cv_text: str, assignment_text: str) -> str:
+#         """Generate cache key for CV-assignment pair."""
+#         return hashlib.sha256((cv_text + assignment_text).encode()).hexdigest()
 
-    def _is_cache_valid(self, cache_file, ttl_hours=24) -> bool:
-        """Check if cache file is valid and not expired."""
-        if not os.path.exists(cache_file):
-            return False
+#     def _is_cache_valid(self, cache_file, ttl_hours=24) -> bool:
+#         """Check if cache file is valid and not expired."""
+#         if not os.path.exists(cache_file):
+#             return False
         
-        file_age = time.time() - os.path.getmtime(cache_file)
-        return file_age < (ttl_hours * 3600)
+#         file_age = time.time() - os.path.getmtime(cache_file)
+#         return file_age < (ttl_hours * 3600)
 
-    def analyze_cv_assignment_match(self, cv_text: str, assignment_text: str) -> Dict[str, Any]:
-        """Analyze CV against assignment requirements."""
-        if self.use_mock:
-            return self._mock_analysis()
+#     def analyze_cv_assignment_match(self, cv_text: str, assignment_text: str) -> Dict[str, Any]:
+#         """Analyze CV against assignment requirements."""
+#         if self.use_mock:
+#             return self._mock_analysis()
         
-        cv_text = self._sanitize_and_truncate_text(cv_text)
-        assignment_text = self._sanitize_and_truncate_text(assignment_text)
+#         cv_text = self._sanitize_and_truncate_text(cv_text)
+#         assignment_text = self._sanitize_and_truncate_text(assignment_text)
         
-        # Check cache
-        cache_key = self._get_cache_key(cv_text, assignment_text)
-        os.makedirs(CACHE_DIR, exist_ok=True)
-        cache_file = os.path.join(CACHE_DIR, f"{cache_key}.json")
+#         # Check cache
+#         cache_key = self._get_cache_key(cv_text, assignment_text)
+#         os.makedirs(CACHE_DIR, exist_ok=True)
+#         cache_file = os.path.join(CACHE_DIR, f"{cache_key}.json")
         
-        if self._is_cache_valid(cache_file):
-            logger.info(f"Returning cached result {cache_key}")
-            with open(cache_file, 'r') as f:
-                return json.load(f)
+#         if self._is_cache_valid(cache_file):
+#             logger.info(f"Returning cached result {cache_key}")
+#             with open(cache_file, 'r') as f:
+#                 return json.load(f)
         
-        prompt = f"""
-        Analyze the provided CV against assignment requirements.
+#         prompt = f"""
+#         Analyze the provided CV against assignment requirements.
 
-        ASSIGNMENT REQUIREMENTS:
-        {assignment_text}
+#         ASSIGNMENT REQUIREMENTS:
+#         {assignment_text}
 
-        CONSULTANT CV:
-        {cv_text}
+#         CONSULTANT CV:
+#         {cv_text}
 
-        Act as an expert HR analyst. Follow these steps:
-        1. Identify all mandatory 'requirements' and optional 'wishes' from the assignment.
-        2. For each requirement/wish, meticulously check the CV for evidence of a match.
-        3. Score the match quality from 0-100. Direct experience = 90-100; related skills = 50-70; no evidence = 0.
-        4. Provide concise, evidence-based explanation for each score.
-        5. Calculate requirements_score, wishes_score, and weighted overall_score (70% requirements, 30% wishes).
-        6. Return a single, valid JSON object as your final output.
+#         Act as an expert HR analyst. Follow these steps:
+#         1. Identify all mandatory 'requirements' and optional 'wishes' from the assignment.
+#         2. For each requirement/wish, meticulously check the CV for evidence of a match.
+#         3. Score the match quality from 0-100. Direct experience = 90-100; related skills = 50-70; no evidence = 0.
+#         4. Provide concise, evidence-based explanation for each score.
+#         5. Calculate requirements_score, wishes_score, and weighted overall_score (70% requirements, 30% wishes).
+#         6. Return a single, valid JSON object as your final output.
 
-        JSON format:
-        {{
-            "overall_score": <number>, 
-            "requirements_score": <number>, 
-            "wishes_score": <number>,
-            "requirements": [{{
-                "id": "req_1", 
-                "type": "require", 
-                "title": "<title>", 
-                "description": "<desc>", 
-                "match": <boolean>, 
-                "percentage": <number>, 
-                "explanation": "<evidence>"
-            }}],
-            "wishes": [{{
-                "id": "wish_1", 
-                "type": "wish", 
-                "title": "<title>", 
-                "description": "<desc>", 
-                "match": <boolean>, 
-                "percentage": <number>, 
-                "explanation": "<evidence>"
-            }}]
-        }}
-        """
+#         JSON format:
+#         {{
+#             "overall_score": <number>, 
+#             "requirements_score": <number>, 
+#             "wishes_score": <number>,
+#             "requirements": [{{
+#                 "id": "req_1", 
+#                 "type": "require", 
+#                 "title": "<title>", 
+#                 "description": "<desc>", 
+#                 "match": <boolean>, 
+#                 "percentage": <number>, 
+#                 "explanation": "<evidence>"
+#             }}],
+#             "wishes": [{{
+#                 "id": "wish_1", 
+#                 "type": "wish", 
+#                 "title": "<title>", 
+#                 "description": "<desc>", 
+#                 "match": <boolean>, 
+#                 "percentage": <number>, 
+#                 "explanation": "<evidence>"
+#             }}]
+#         }}
+#         """
         
-        system_content = "You are a world-class HR analyst. You must return your analysis ONLY in the specified JSON format."
-        content = self._call_openai(prompt, system_content, use_json_mode=True)
+#         system_content = "You are a world-class HR analyst. You must return your analysis ONLY in the specified JSON format."
+#         content = self._call_openai(prompt, system_content, use_json_mode=True)
         
-        try:
-            result = json.loads(content)
-            result = self._validate_analysis_result(result)
-        except json.JSONDecodeError as e:
-            logger.error(f"JSON parsing failed: {e}")
-            raise ValueError("Failed to parse AI response as valid JSON.")
+#         try:
+#             result = json.loads(content)
+#             result = self._validate_analysis_result(result)
+#         except json.JSONDecodeError as e:
+#             logger.error(f"JSON parsing failed: {e}")
+#             raise ValueError("Failed to parse AI response as valid JSON.")
         
-        # Cache the result
-        with open(cache_file, 'w') as f:
-            json.dump(result, f)
-        logger.info(f"Cached new result with key: {cache_key}")
+#         # Cache the result
+#         with open(cache_file, 'w') as f:
+#             json.dump(result, f)
+#         logger.info(f"Cached new result with key: {cache_key}")
         
-        return result
+#         return result
 
-    def generate_motivations(self, cv_text: str, requirements: List[Dict], consultant_name: str) -> Dict[str, str]:
-        """Generate personalized motivations for each requirement."""
-        if self.use_mock:
-            return {req['id']: "Mock motivation for testing." for req in requirements}
+#     def generate_motivations(self, cv_text: str, requirements: List[Dict], consultant_name: str) -> Dict[str, str]:
+#         """Generate personalized motivations for each requirement."""
+#         if self.use_mock:
+#             return {req['id']: "Mock motivation for testing." for req in requirements}
         
-        motivations = {}
-        cv_text = self._sanitize_and_truncate_text(cv_text)
-        system_content = "You are an expert at writing compelling, specific motivations for job requirements."
+#         motivations = {}
+#         cv_text = self._sanitize_and_truncate_text(cv_text)
+#         system_content = "You are an expert at writing compelling, specific motivations for job requirements."
         
-        for req in requirements:
-            prompt = f"""
-            Generate a personalized, 2-3 sentence motivation for the following requirement based on the consultant's CV.
+#         for req in requirements:
+#             prompt = f"""
+#             Generate a personalized, 2-3 sentence motivation for the following requirement based on the consultant's CV.
             
-            CONSULTANT: {consultant_name}
-            REQUIREMENT: {req['title']} - {req['description']}
+#             CONSULTANT: {consultant_name}
+#             REQUIREMENT: {req['title']} - {req['description']}
             
-            CV CONTENT:
-            {cv_text}
+#             CV CONTENT:
+#             {cv_text}
             
-            Instructions:
-            - Write a motivation that directly addresses the requirement.
-            - Use specific examples, projects, or skills from the CV.
-            - If the match is low, focus on transferable skills and strong desire to learn.
-            - Return only the motivation text, without any titles or extra formatting.
-            """
+#             Instructions:
+#             - Write a motivation that directly addresses the requirement.
+#             - Use specific examples, projects, or skills from the CV.
+#             - If the match is low, focus on transferable skills and strong desire to learn.
+#             - Return only the motivation text, without any titles or extra formatting.
+#             """
             
-            try:
-                content = self._call_openai(prompt, system_content, temperature=0.4)
-                motivations[req['id']] = content
-            except Exception as e:
-                logger.error(f"Error generating motivation for requirement {req['id']}: {e}")
-                motivations[req['id']] = f"Error generating motivation: {str(e)}"
+#             try:
+#                 content = self._call_openai(prompt, system_content, temperature=0.4)
+#                 motivations[req['id']] = content
+#             except Exception as e:
+#                 logger.error(f"Error generating motivation for requirement {req['id']}: {e}")
+#                 motivations[req['id']] = f"Error generating motivation: {str(e)}"
         
-        return motivations
+#         return motivations
 
-    def generate_cover_letter(self, cv_text: str, assignment_info: Dict, consultant_name: str, analysis_result: Dict) -> str:
-        """Generate a personalized cover letter."""
-        if self.use_mock:
-            return "Mock cover letter for testing."
+#     def generate_cover_letter(self, cv_text: str, assignment_info: Dict, consultant_name: str, analysis_result: Dict) -> str:
+#         """Generate a personalized cover letter."""
+#         if self.use_mock:
+#             return "Mock cover letter for testing."
         
-        cv_text = self._sanitize_and_truncate_text(cv_text)
-        assignment_description = self._sanitize_and_truncate_text(assignment_info.get('description', ''))
+#         cv_text = self._sanitize_and_truncate_text(cv_text)
+#         assignment_description = self._sanitize_and_truncate_text(assignment_info.get('description', ''))
         
-        prompt = f"""
-        Write a professional and compelling cover letter (300-400 words).
+#         prompt = f"""
+#         Write a professional and compelling cover letter (300-400 words).
         
-        CONSULTANT: {consultant_name}
-        CLIENT: {assignment_info.get('client', 'the client')}
-        POSITION: {assignment_info.get('title', 'the position')}
+#         CONSULTANT: {consultant_name}
+#         CLIENT: {assignment_info.get('client', 'the client')}
+#         POSITION: {assignment_info.get('title', 'the position')}
         
-        CONSULTANT CV SUMMARY:
-        {cv_text}
+#         CONSULTANT CV SUMMARY:
+#         {cv_text}
         
-        ASSIGNMENT DESCRIPTION:
-        {assignment_description}
+#         ASSIGNMENT DESCRIPTION:
+#         {assignment_description}
         
-        Instructions:
-        1. Create a strong, personalized opening.
-        2. Highlight the top 2-3 most relevant skills and experiences from the CV that match the assignment. Use specific examples.
-        3. Show genuine enthusiasm for the role and the client's company.
-        4. Maintain a professional, confident, yet personable tone.
-        5. Conclude with a clear call to action.
-        """
+#         Instructions:
+#         1. Create a strong, personalized opening.
+#         2. Highlight the top 2-3 most relevant skills and experiences from the CV that match the assignment. Use specific examples.
+#         3. Show genuine enthusiasm for the role and the client's company.
+#         4. Maintain a professional, confident, yet personable tone.
+#         5. Conclude with a clear call to action.
+#         """
         
-        system_content = "You are an expert career coach specializing in writing persuasive cover letters for tech professionals."
-        return self._call_openai(prompt, system_content, temperature=0.5)
+#         system_content = "You are an expert career coach specializing in writing persuasive cover letters for tech professionals."
+#         return self._call_openai(prompt, system_content, temperature=0.5)
 
-    def generate_introduction_email(self, consultant_info: Dict, assignment_info: Dict, analysis_result: Dict) -> str:
-        """Generate a professional introduction email."""
-        if self.use_mock:
-            return "Mock email for testing."
+#     def generate_introduction_email(self, consultant_info: Dict, assignment_info: Dict, analysis_result: Dict) -> str:
+#         """Generate a professional introduction email."""
+#         if self.use_mock:
+#             return "Mock email for testing."
         
-        prompt = f"""
-        Write a professional introduction email from a staffing agency to a client.
+#         prompt = f"""
+#         Write a professional introduction email from a staffing agency to a client.
         
-        CONSULTANT: {consultant_info.get('name', 'the consultant')}
-        CLIENT: {assignment_info.get('client', 'the client')}
-        POSITION: {assignment_info.get('title', 'the position')}
-        CONTACT PERSON AT CLIENT: {consultant_info.get('contactPerson', 'Hiring Manager')}
-        MATCH SCORE: {analysis_result.get('overall_score', 0)}%
-        KEY REQUIREMENTS MET: {', '.join([r['title'] for r in analysis_result.get('requirements', []) if r.get('match')])}
+#         CONSULTANT: {consultant_info.get('name', 'the consultant')}
+#         CLIENT: {assignment_info.get('client', 'the client')}
+#         POSITION: {assignment_info.get('title', 'the position')}
+#         CONTACT PERSON AT CLIENT: {consultant_info.get('contactPerson', 'Hiring Manager')}
+#         MATCH SCORE: {analysis_result.get('overall_score', 0)}%
+#         KEY REQUIREMENTS MET: {', '.join([r['title'] for r in analysis_result.get('requirements', []) if r.get('match')])}
         
-        Instructions:
-        - Write a concise and professional email (200-300 words).
-        - Use a clear subject line like: "Introduction: [Consultant Name] for the [Position Title] Role".
-        - Briefly introduce the consultant, highlighting their key strengths and the high match score.
-        - Mention attached documents (CV, motivation).
-        - Use "Wanita Bajnath" as the sender's name.
-        """
+#         Instructions:
+#         - Write a concise and professional email (200-300 words).
+#         - Use a clear subject line like: "Introduction: [Consultant Name] for the [Position Title] Role".
+#         - Briefly introduce the consultant, highlighting their key strengths and the high match score.
+#         - Mention attached documents (CV, motivation).
+#         - Use "Wanita Bajnath" as the sender's name.
+#         """
         
-        system_content = "You are an expert business communicator for a recruitment agency. Your tone is professional, efficient, and client-focused."
-        return self._call_openai(prompt, system_content, temperature=0.3)
+#         system_content = "You are an expert business communicator for a recruitment agency. Your tone is professional, efficient, and client-focused."
+#         return self._call_openai(prompt, system_content, temperature=0.3)
 
-    def customize_content(self, content_type: str, original_content: str, user_prompt: str, context: Dict = None) -> str:
-        """Customize generated content based on user feedback."""
-        if self.use_mock:
-            return f"Mock customized content for {content_type}."
+#     def customize_content(self, content_type: str, original_content: str, user_prompt: str, context: Dict = None) -> str:
+#         """Customize generated content based on user feedback."""
+#         if self.use_mock:
+#             return f"Mock customized content for {content_type}."
         
-        system_prompts = {
-            'motivation': "You are an expert editor specializing in job application motivations. Refine the provided text based on the user's instructions, keeping it professional and concise.",
-            'coverletter': "You are an expert editor for professional cover letters. Rewrite the original letter to incorporate the user's feedback, enhancing its persuasive impact.",
-            'email': "You are an expert business communication editor. Modify the email according to the user's request, ensuring it remains professional and clear."
-        }
+#         system_prompts = {
+#             'motivation': "You are an expert editor specializing in job application motivations. Refine the provided text based on the user's instructions, keeping it professional and concise.",
+#             'coverletter': "You are an expert editor for professional cover letters. Rewrite the original letter to incorporate the user's feedback, enhancing its persuasive impact.",
+#             'email': "You are an expert business communication editor. Modify the email according to the user's request, ensuring it remains professional and clear."
+#         }
         
-        prompt = f"""
-        You are tasked with editing the following text based on user instructions.
+#         prompt = f"""
+#         You are tasked with editing the following text based on user instructions.
         
-        ORIGINAL CONTENT:
-        ---
-        {original_content}
-        ---
+#         ORIGINAL CONTENT:
+#         ---
+#         {original_content}
+#         ---
         
-        USER INSTRUCTIONS:
-        ---
-        {user_prompt}
-        ---
+#         USER INSTRUCTIONS:
+#         ---
+#         {user_prompt}
+#         ---
         
-        Please return only the fully rewritten, modified content. Do not add any commentary.
-        """
+#         Please return only the fully rewritten, modified content. Do not add any commentary.
+#         """
         
-        system_content = system_prompts.get(content_type, "You are a helpful editing assistant.")
-        return self._call_openai(prompt, system_content, temperature=0.4)
+#         system_content = system_prompts.get(content_type, "You are a helpful editing assistant.")
+#         return self._call_openai(prompt, system_content, temperature=0.4)
 
-# --- Initialize Analyzer ---
-try:
-    analyzer = CVAnalyzer()
-except ValueError as e:
-    logger.critical(f"CRITICAL: CVAnalyzer failed to initialize: {e}", exc_info=True)
-    analyzer = None
+# # --- Initialize Analyzer ---
+# try:
+#     analyzer = CVAnalyzer()
+# except ValueError as e:
+#     logger.critical(f"CRITICAL: CVAnalyzer failed to initialize: {e}", exc_info=True)
+#     analyzer = None
 
-# --- Helper Functions ---
-def get_request_data():
-    """Parse multipart form data from request."""
-    if 'cv_file' not in request.files:
-        raise ValueError('CV file is required.')
+# # --- Helper Functions ---
+# def get_request_data():
+#     """Parse multipart form data from request."""
+#     if 'cv_file' not in request.files:
+#         raise ValueError('CV file is required.')
     
-    cv_file = request.files['cv_file']
-    validate_file_upload(cv_file)
+#     cv_file = request.files['cv_file']
+#     validate_file_upload(cv_file)
     
-    assignment_file = request.files.get('assignment_file')
-    if assignment_file:
-        validate_file_upload(assignment_file)
+#     assignment_file = request.files.get('assignment_file')
+#     if assignment_file:
+#         validate_file_upload(assignment_file)
     
-    return {
-        "cv_file": cv_file,
-        "assignment_file": assignment_file,
-        "assignment_data": json.loads(request.form.get('assignment_data', '{}')),
-        "consultant_data": json.loads(request.form.get('consultant_data', '{}'))
-    }
+#     return {
+#         "cv_file": cv_file,
+#         "assignment_file": assignment_file,
+#         "assignment_data": json.loads(request.form.get('assignment_data', '{}')),
+#         "consultant_data": json.loads(request.form.get('consultant_data', '{}'))
+#     }
 
-# --- API Endpoints ---
-@app.route('/api/analyze', methods=['POST'])
-def analyze_cv_endpoint():
-    """Analyze CV against assignment requirements."""
-    if not analyzer:
-        raise Exception("CV Analyzer not initialized properly.")
+# # --- API Endpoints ---
+# @app.route('/api/analyze', methods=['POST'])
+# def analyze_cv_endpoint():
+#     """Analyze CV against assignment requirements."""
+#     if not analyzer:
+#         raise Exception("CV Analyzer not initialized properly.")
     
-    form_data = get_request_data()
+#     form_data = get_request_data()
     
-    # Extract CV text
-    cv_text = analyzer.extract_text_from_file(
-        form_data['cv_file'].read(), 
-        form_data['cv_file'].filename
-    )
+#     # Extract CV text
+#     cv_text = analyzer.extract_text_from_file(
+#         form_data['cv_file'].read(), 
+#         form_data['cv_file'].filename
+#     )
     
-    # Get assignment text
-    assignment_text = form_data['assignment_data'].get('description', '')
+#     # Get assignment text
+#     assignment_text = form_data['assignment_data'].get('description', '')
     
-    # Extract assignment file text if provided
-    if form_data['assignment_file']:
-        assignment_file_text = analyzer.extract_text_from_file(
-            form_data['assignment_file'].read(), 
-            form_data['assignment_file'].filename
-        )
-        assignment_text += f"\n\n{assignment_file_text}"
+#     # Extract assignment file text if provided
+#     if form_data['assignment_file']:
+#         assignment_file_text = analyzer.extract_text_from_file(
+#             form_data['assignment_file'].read(), 
+#             form_data['assignment_file'].filename
+#         )
+#         assignment_text += f"\n\n{assignment_file_text}"
     
-    # Perform analysis
-    analysis_result = analyzer.analyze_cv_assignment_match(cv_text, assignment_text)
+#     # Perform analysis
+#     analysis_result = analyzer.analyze_cv_assignment_match(cv_text, assignment_text)
     
-    return jsonify({
-        'success': True, 
-        'analysis': analysis_result, 
-        'cv_text': cv_text
-    })
+#     return jsonify({
+#         'success': True, 
+#         'analysis': analysis_result, 
+#         'cv_text': cv_text
+#     })
 
-@app.route('/api/generate-motivations', methods=['POST'])
-def generate_motivations_endpoint():
-    """Generate motivations for requirements."""
-    if not analyzer:
-        raise Exception("CV Analyzer not initialized properly.")
+# @app.route('/api/generate-motivations', methods=['POST'])
+# def generate_motivations_endpoint():
+#     """Generate motivations for requirements."""
+#     if not analyzer:
+#         raise Exception("CV Analyzer not initialized properly.")
     
-    data = request.json
-    if not all(k in data for k in ['cv_text', 'requirements', 'consultant_name']):
-        raise ValueError('Missing required fields: cv_text, requirements, consultant_name.')
+#     data = request.json
+#     if not all(k in data for k in ['cv_text', 'requirements', 'consultant_name']):
+#         raise ValueError('Missing required fields: cv_text, requirements, consultant_name.')
     
-    motivations = analyzer.generate_motivations(
-        data['cv_text'], 
-        data['requirements'], 
-        data['consultant_name']
-    )
+#     motivations = analyzer.generate_motivations(
+#         data['cv_text'], 
+#         data['requirements'], 
+#         data['consultant_name']
+#     )
     
-    return jsonify({'success': True, 'motivations': motivations})
+#     return jsonify({'success': True, 'motivations': motivations})
 
-@app.route('/api/generate-cover-letter', methods=['POST'])
-def generate_cover_letter_endpoint():
-    """Generate cover letter."""
-    if not analyzer:
-        raise Exception("CV Analyzer not initialized properly.")
+# @app.route('/api/generate-cover-letter', methods=['POST'])
+# def generate_cover_letter_endpoint():
+#     """Generate cover letter."""
+#     if not analyzer:
+#         raise Exception("CV Analyzer not initialized properly.")
     
-    data = request.json
-    if not all(k in data for k in ['cv_text', 'assignment_info', 'consultant_name', 'analysis_result']):
-        raise ValueError('Missing required fields: cv_text, assignment_info, consultant_name, analysis_result.')
+#     data = request.json
+#     if not all(k in data for k in ['cv_text', 'assignment_info', 'consultant_name', 'analysis_result']):
+#         raise ValueError('Missing required fields: cv_text, assignment_info, consultant_name, analysis_result.')
     
-    cover_letter = analyzer.generate_cover_letter(
-        data['cv_text'], 
-        data['assignment_info'], 
-        data['consultant_name'], 
-        data['analysis_result']
-    )
+#     cover_letter = analyzer.generate_cover_letter(
+#         data['cv_text'], 
+#         data['assignment_info'], 
+#         data['consultant_name'], 
+#         data['analysis_result']
+#     )
     
-    return jsonify({'success': True, 'cover_letter': cover_letter})
+#     return jsonify({'success': True, 'cover_letter': cover_letter})
 
-@app.route('/api/generate-email', methods=['POST'])
-def generate_email_endpoint():
-    """Generate introduction email."""
-    if not analyzer:
-        raise Exception("CV Analyzer not initialized properly.")
+# @app.route('/api/generate-email', methods=['POST'])
+# def generate_email_endpoint():
+#     """Generate introduction email."""
+#     if not analyzer:
+#         raise Exception("CV Analyzer not initialized properly.")
     
-    data = request.json
-    if not all(k in data for k in ['consultant_info', 'assignment_info', 'analysis_result']):
-        raise ValueError('Missing required fields: consultant_info, assignment_info, analysis_result.')
+#     data = request.json
+#     if not all(k in data for k in ['consultant_info', 'assignment_info', 'analysis_result']):
+#         raise ValueError('Missing required fields: consultant_info, assignment_info, analysis_result.')
     
-    email = analyzer.generate_introduction_email(
-        data['consultant_info'], 
-        data['assignment_info'], 
-        data['analysis_result']
-    )
+#     email = analyzer.generate_introduction_email(
+#         data['consultant_info'], 
+#         data['assignment_info'], 
+#         data['analysis_result']
+#     )
     
-    return jsonify({'success': True, 'email': email})
+#     return jsonify({'success': True, 'email': email})
 
-@app.route('/api/customize-content', methods=['POST'])
-def customize_content_endpoint():
-    """Customize generated content."""
-    if not analyzer:
-        raise Exception("CV Analyzer not initialized properly.")
+# @app.route('/api/customize-content', methods=['POST'])
+# def customize_content_endpoint():
+#     """Customize generated content."""
+#     if not analyzer:
+#         raise Exception("CV Analyzer not initialized properly.")
     
-    data = request.json
-    if not all(k in data for k in ['type', 'content', 'prompt']):
-        raise ValueError('Missing required fields: type, content, prompt.')
+#     data = request.json
+#     if not all(k in data for k in ['type', 'content', 'prompt']):
+#         raise ValueError('Missing required fields: type, content, prompt.')
     
-    customized_content = analyzer.customize_content(
-        data['type'], 
-        data['content'], 
-        data['prompt'], 
-        data.get('context', {})
-    )
+#     customized_content = analyzer.customize_content(
+#         data['type'], 
+#         data['content'], 
+#         data['prompt'], 
+#         data.get('context', {})
+#     )
     
-    return jsonify({'success': True, 'customized_content': customized_content})
+#     return jsonify({'success': True, 'customized_content': customized_content})
 
-@app.route('/health', methods=['GET'])
-def health_check():
-    """Health check endpoint."""
-    return jsonify({
-        'status': 'healthy', 
-        'service': 'CV Analysis API',
-        'analyzer_initialized': analyzer is not None
-    })
+# @app.route('/health', methods=['GET'])
+# def health_check():
+#     """Health check endpoint."""
+#     return jsonify({
+#         'status': 'healthy', 
+#         'service': 'CV Analysis API',
+#         'analyzer_initialized': analyzer is not None
+#     })
 
-# --- Error Handlers ---
-@app.errorhandler(ValueError)
-def handle_validation_error(e):
-    logger.error(f"Validation error: {e}", exc_info=True)
-    return jsonify({
-        "success": False, 
-        "error": "validation_error", 
-        "message": str(e), 
-        "timestamp": datetime.now(timezone.utc).isoformat()
-    }), 400
+# # --- Error Handlers ---
+# @app.errorhandler(ValueError)
+# def handle_validation_error(e):
+#     logger.error(f"Validation error: {e}", exc_info=True)
+#     return jsonify({
+#         "success": False, 
+#         "error": "validation_error", 
+#         "message": str(e), 
+#         "timestamp": datetime.now(timezone.utc).isoformat()
+#     }), 400
 
-@app.errorhandler(RateLimitError)
-def handle_rate_limit_error(e):
-    logger.error(f"Rate limit exceeded: {e}", exc_info=True)
-    return jsonify({
-        "success": False, 
-        "error": "rate_limit_exceeded", 
-        "message": "API rate limit exceeded. Please try again later.", 
-        "timestamp": datetime.now(timezone.utc).isoformat()
-    }), 429
+# @app.errorhandler(RateLimitError)
+# def handle_rate_limit_error(e):
+#     logger.error(f"Rate limit exceeded: {e}", exc_info=True)
+#     return jsonify({
+#         "success": False, 
+#         "error": "rate_limit_exceeded", 
+#         "message": "API rate limit exceeded. Please try again later.", 
+#         "timestamp": datetime.now(timezone.utc).isoformat()
+#     }), 429
 
-@app.errorhandler(Exception)
-def handle_generic_error(e):
-    logger.error(f"Unhandled exception: {e}", exc_info=True)
-    return jsonify({
-        "success": False, 
-        "error": "internal_error", 
-        "message": str(e), 
-        "timestamp": datetime.now(timezone.utc).isoformat()
-    }), 500
+# @app.errorhandler(Exception)
+# def handle_generic_error(e):
+#     logger.error(f"Unhandled exception: {e}", exc_info=True)
+#     return jsonify({
+#         "success": False, 
+#         "error": "internal_error", 
+#         "message": str(e), 
+#         "timestamp": datetime.now(timezone.utc).isoformat()
+#     }), 500
 
-# --- App Runner ---
+# # --- App Runner ---
+# if __name__ == '__main__':
+#     if not analyzer:
+#         print("FATAL: Application cannot start because CVAnalyzer failed to initialize. Check .env file and logs.")
+#     else:
+#         app.run(debug=True, host='0.0.0.0', port=5000)
+
+
+
+
+
+
+
+import logging
+from datetime import datetime, timezone
+from flask import Flask, jsonify
+from flask_cors import CORS
+from openai import RateLimitError
+
+from src.api.routes import api_blueprint
+from src.config import config
+
+def create_app():
+    """Create and configure the Flask application."""
+    app = Flask(__name__)
+    CORS(app)
+
+    # Configure logging
+    logging.basicConfig(level=config.LOG_LEVEL, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+    
+    # Register blueprints
+    app.register_blueprint(api_blueprint)
+
+    # Register error handlers
+    register_error_handlers(app)
+
+    @app.route('/health', methods=['GET'])
+    def health_check():
+        return jsonify({
+            'status': 'healthy', 
+            'service': 'CV Analysis API',
+            'timestamp': datetime.now(timezone.utc).isoformat()
+        })
+
+    return app
+
+def register_error_handlers(app):
+    """Register custom error handlers for the application."""
+    @app.errorhandler(ValueError)
+    def handle_validation_error(e):
+        logging.error(f"Validation error: {e}", exc_info=True)
+        return jsonify({"success": False, "error": "validation_error", "message": str(e)}), 400
+
+    @app.errorhandler(RateLimitError)
+    def handle_rate_limit_error(e):
+        logging.error(f"Rate limit exceeded: {e}", exc_info=True)
+        return jsonify({"success": False, "error": "rate_limit_exceeded", "message": "API rate limit exceeded."}), 429
+
+    @app.errorhandler(Exception)
+    def handle_generic_error(e):
+        logging.error(f"Unhandled exception: {e}", exc_info=True)
+        return jsonify({"success": False, "error": "internal_error", "message": "An unexpected error occurred."}), 500
+
 if __name__ == '__main__':
-    if not analyzer:
-        print("FATAL: Application cannot start because CVAnalyzer failed to initialize. Check .env file and logs.")
-    else:
+    app = create_app()
+    try:
+        # A simple check to ensure analyzer can initialize
+        from src.serivces.analyzer import CVAnalyzer  # Note: Directory is actually misspelled in the filesystem
+        CVAnalyzer()
         app.run(debug=True, host='0.0.0.0', port=5000)
+    except ValueError as e:
+        logging.critical(f"FATAL: Application cannot start. {e}")
