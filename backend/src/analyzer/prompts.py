@@ -42,7 +42,7 @@ SYSTEM_PROMPTS = {
         Create compelling professional summaries that highlight unique value propositions."""
     },
     
-    'gemini-pro': {
+    'gemini-1.5-flash': {
         'analyze': """As an advanced HR analyst, provide thorough CV evaluation.
         Return detailed analysis in the specified JSON format with clear insights.""",
         
@@ -60,7 +60,45 @@ SYSTEM_PROMPTS = {
         
         'summary': """As a professional profile expert, create effective summaries.
         Focus on key achievements and unique qualifications."""
-    }
+    },
+    'gemma2:9b-instruct-q4_K_M': {
+        'analyze': """You are a proficient HR analyst with expertise in technical recruitment. 
+        Analyze CVs objectively and return structured feedback in the specified JSON format only.""",
+        
+        'skills': """You are a technical skills assessment expert.
+        Evaluate skills against job requirements and provide detailed matching analysis.""",
+        
+        'experience': """You are an expert in evaluating professional experience.
+        Assess work history relevance and impact, focusing on concrete achievements.""",
+        
+        'motivation': """You are skilled at writing compelling motivations for job applications.
+        Create engaging content that highlights candidate strengths.""",
+        
+        'cover_letter': """You are a professional cover letter writer.
+        Create persuasive letters that effectively showcase candidate qualifications.""",
+        
+        'summary': """You are an expert at creating professional summaries.
+        Craft concise, impactful overviews of candidate profiles."""
+    },
+    'gemma3:1b': {
+        'analyze': """You are a proficient HR analyst with expertise in technical recruitment. 
+        Analyze CVs objectively and return structured feedback in the specified JSON format only.""",
+        
+        'skills': """You are a technical skills assessment expert.
+        Evaluate skills against job requirements and provide detailed matching analysis.""",
+        
+        'experience': """You are an expert in evaluating professional experience.
+        Assess work history relevance and impact, focusing on concrete achievements.""",
+        
+        'motivation': """You are skilled at writing compelling motivations for job applications.
+        Create engaging content that highlights candidate strengths.""",
+        
+        'cover_letter': """You are a professional cover letter writer.
+        Create persuasive letters that effectively showcase candidate qualifications.""",
+        
+        'summary': """You are an expert at creating professional summaries.
+        Craft concise, impactful overviews of candidate profiles."""
+    },
 }
 
 def get_analyze_cv_prompt(cv_text: str, requirements: str, model_name: str = 'gpt-3.5-turbo') -> dict:
