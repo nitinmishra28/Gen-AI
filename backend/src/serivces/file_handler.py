@@ -1,102 +1,448 @@
+# import os
+# import PyPDF2
+# import pdfplumber
+# import docx
+# from io import BytesIO
+# import logging
+
+# logger = logging.getLogger(__name__)
+
+# class FileHandler:
+#     """Handles file validation and text extraction."""
+
+#     VALID_EXTENSIONS = ('.pdf', '.docx', '.doc', '.txt')
+
+#     def validate_file(self, file, max_size_mb=10):
+#         """Enhanced file validation with content checking."""
+#         file.seek(0, 2)
+#         size = file.tell()
+#         file.seek(0)
+        
+#         if size > max_size_mb * 1024 * 1024:
+#             raise ValueError(f"File too large. Maximum size is {max_size_mb}MB.")
+#         if size == 0:
+#             raise ValueError("File is empty.")
+        
+#         ext = os.path.splitext(file.filename)[1].lower()
+#         if ext not in self.VALID_EXTENSIONS:
+#             raise ValueError(f"Unsupported file extension: {ext}. Supported: {', '.join(self.VALID_EXTENSIONS)}")
+        
+#         header = file.read(min(512, size))
+#         file.seek(0)
+        
+#         if ext == '.pdf' and not header.startswith(b'%PDF-'):
+#             raise ValueError("Invalid PDF file format - missing PDF header.")
+#         elif ext == '.docx' and not header.startswith(b'PK\x03\x04'):
+#             raise ValueError("Invalid DOCX file format.")
+#         elif ext == '.doc' and not header.startswith(b'\xd0\xcf\x11\xe0'):
+#             raise ValueError("Invalid DOC file format.")
+
+#     def extract_text_from_file(self, file_content: bytes, filename: str) -> str:
+#         """Extract text from various file formats."""
+#         ext = os.path.splitext(filename)[1].lower()
+#         try:
+#             if ext == '.pdf':
+#                 return self._extract_from_pdf(file_content)
+#             elif ext in ['.doc', '.docx']:
+#                 return self._extract_from_docx(file_content)
+#             elif ext == '.txt':
+#                 return file_content.decode('utf-8', errors='ignore')
+#             else:
+#                 raise ValueError(f"Unsupported file type: {ext}")
+#         except Exception as e:
+#             logger.error(f"Error extracting text from {filename}: {e}", exc_info=True)
+#             raise Exception(f"Could not read '{filename}'. {str(e)}") from e
+
+#     def _extract_from_pdf(self, file_content: bytes) -> str:
+#         # Using pdfplumber first
+#         try:
+#             with pdfplumber.open(BytesIO(file_content)) as pdf:
+#                 # Encryption check
+#                 if not pdf.pages:
+#                      raise ValueError("PDF has no readable pages.")
+#                 pdf.pages[0].extract_text() # Fails if encrypted
+                
+#                 text = "".join(page.extract_text() + "\n" for page in pdf.pages if page.extract_text())
+#                 if text.strip():
+#                     return text
+#         except Exception as e:
+#             if any(x in str(e).lower() for x in ['password', 'encrypted']):
+#                 raise ValueError("The PDF is password-protected and cannot be read.")
+#             logger.debug(f"pdfplumber failed, falling back to PyPDF2: {e}")
+
+#         # Fallback to PyPDF2
+#         try:
+#             pdf_reader = PyPDF2.PdfReader(BytesIO(file_content))
+#             if pdf_reader.is_encrypted:
+#                 raise ValueError("The PDF is password-protected and cannot be read.")
+            
+#             text = "".join(page.extract_text() + "\n" for page in pdf_reader.pages if page.extract_text())
+#             if text.strip():
+#                 logger.info("PDF extracted using PyPDF2 fallback")
+#                 return text
+#         except Exception as e:
+#             raise ValueError("Could not extract text from PDF. The file may be corrupted or image-based.") from e
+
+#         raise ValueError("Could not extract any text from the PDF.")
+
+#     def _extract_from_docx(self, file_content: bytes) -> str:
+#         try:
+#             doc = docx.Document(BytesIO(file_content))
+#             all_text = [p.text for p in doc.paragraphs if p.text.strip()]
+#             for table in doc.tables:
+#                 for row in table.rows:
+#                     row_text = [cell.text.strip() for cell in row.cells if cell.text.strip()]
+#                     if row_text:
+#                         all_text.append(" | ".join(row_text))
+            
+#             if not all_text:
+#                 raise ValueError("DOCX file appears empty or contains no readable text.")
+#             return "\n".join(all_text)
+#         except Exception as e:
+#             raise ValueError("Failed to process DOCX file. It may be corrupted.") from e
+
+
+
+
 import os
+import logging
+from io import BytesIO
+from typing import Union, BinaryIO
+import asyncio
+from functools import lru_cache
+
 import PyPDF2
 import pdfplumber
 import docx
-from io import BytesIO
-import logging
+from fastapi import UploadFile, HTTPException
 
 logger = logging.getLogger(__name__)
 
+
 class FileHandler:
-    """Handles file validation and text extraction."""
+    """Handles file validation and text extraction for FastAPI applications."""
 
     VALID_EXTENSIONS = ('.pdf', '.docx', '.doc', '.txt')
+    
+    def __init__(self, max_size_mb: int = 10):
+        """
+        Initialize FileHandler with configurable size limits.
+        
+        Args:
+            max_size_mb: Maximum file size in megabytes
+        """
+        self.max_size_mb = max_size_mb
 
-    def validate_file(self, file, max_size_mb=10):
-        """Enhanced file validation with content checking."""
-        file.seek(0, 2)
-        size = file.tell()
-        file.seek(0)
+    async def validate_file(self, file: UploadFile, max_size_mb: int = None) -> None:
+        """
+        Enhanced file validation with content checking for FastAPI UploadFile.
         
-        if size > max_size_mb * 1024 * 1024:
-            raise ValueError(f"File too large. Maximum size is {max_size_mb}MB.")
-        if size == 0:
-            raise ValueError("File is empty.")
+        Args:
+            file: FastAPI UploadFile object
+            max_size_mb: Optional override for max file size
+            
+        Raises:
+            HTTPException: If file validation fails
+        """
+        max_size = max_size_mb or self.max_size_mb
         
-        ext = os.path.splitext(file.filename)[1].lower()
-        if ext not in self.VALID_EXTENSIONS:
-            raise ValueError(f"Unsupported file extension: {ext}. Supported: {', '.join(self.VALID_EXTENSIONS)}")
-        
-        header = file.read(min(512, size))
-        file.seek(0)
+        try:
+            # Check file size
+            file_size = await self._get_file_size(file)
+            
+            if file_size > max_size * 1024 * 1024:
+                raise HTTPException(
+                    status_code=413,
+                    detail=f"File too large. Maximum size is {max_size}MB."
+                )
+            
+            if file_size == 0:
+                raise HTTPException(
+                    status_code=400,
+                    detail="File is empty."
+                )
+            
+            # Validate file extension
+            if not file.filename:
+                raise HTTPException(
+                    status_code=400,
+                    detail="Filename is required."
+                )
+                
+            ext = os.path.splitext(file.filename)[1].lower()
+            if ext not in self.VALID_EXTENSIONS:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Unsupported file extension: {ext}. Supported: {', '.join(self.VALID_EXTENSIONS)}"
+                )
+            
+            # Validate file content headers
+            await self._validate_file_content(file, ext, file_size)
+            
+        except HTTPException:
+            raise
+        except Exception as e:
+            logger.error(f"Error validating file {file.filename}: {e}", exc_info=True)
+            raise HTTPException(
+                status_code=400,
+                detail=f"File validation failed: {str(e)}"
+            )
+
+    async def _get_file_size(self, file: UploadFile) -> int:
+        """Get file size asynchronously."""
+        # Read the entire file to get size
+        content = await file.read()
+        size = len(content)
+        # Reset file pointer
+        await file.seek(0)
+        return size
+
+    async def _validate_file_content(self, file: UploadFile, ext: str, file_size: int) -> None:
+        """Validate file content headers asynchronously."""
+        # Read header for validation
+        header_size = min(512, file_size)
+        header = await file.read(header_size)
+        await file.seek(0)  # Reset file pointer
         
         if ext == '.pdf' and not header.startswith(b'%PDF-'):
-            raise ValueError("Invalid PDF file format - missing PDF header.")
+            raise HTTPException(
+                status_code=400,
+                detail="Invalid PDF file format - missing PDF header."
+            )
         elif ext == '.docx' and not header.startswith(b'PK\x03\x04'):
-            raise ValueError("Invalid DOCX file format.")
+            raise HTTPException(
+                status_code=400,
+                detail="Invalid DOCX file format."
+            )
         elif ext == '.doc' and not header.startswith(b'\xd0\xcf\x11\xe0'):
-            raise ValueError("Invalid DOC file format.")
+            raise HTTPException(
+                status_code=400,
+                detail="Invalid DOC file format."
+            )
 
-    def extract_text_from_file(self, file_content: bytes, filename: str) -> str:
-        """Extract text from various file formats."""
+    async def extract_text_from_file(self, file_content: bytes, filename: str) -> str:
+        """
+        Extract text from various file formats asynchronously.
+        
+        Args:
+            file_content: Raw file content as bytes
+            filename: Name of the file (used for extension detection)
+            
+        Returns:
+            Extracted text content
+            
+        Raises:
+            HTTPException: If text extraction fails
+        """
         ext = os.path.splitext(filename)[1].lower()
+        
         try:
+            # Run text extraction in thread pool to avoid blocking
+            loop = asyncio.get_event_loop()
+            
             if ext == '.pdf':
-                return self._extract_from_pdf(file_content)
+                text = await loop.run_in_executor(
+                    None, self._extract_from_pdf, file_content
+                )
             elif ext in ['.doc', '.docx']:
-                return self._extract_from_docx(file_content)
+                text = await loop.run_in_executor(
+                    None, self._extract_from_docx, file_content
+                )
             elif ext == '.txt':
-                return file_content.decode('utf-8', errors='ignore')
+                text = await loop.run_in_executor(
+                    None, self._extract_from_txt, file_content
+                )
             else:
-                raise ValueError(f"Unsupported file type: {ext}")
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Unsupported file type: {ext}"
+                )
+            
+            if not text.strip():
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"No readable text found in {filename}"
+                )
+                
+            return text
+            
+        except HTTPException:
+            raise
         except Exception as e:
             logger.error(f"Error extracting text from {filename}: {e}", exc_info=True)
-            raise Exception(f"Could not read '{filename}'. {str(e)}") from e
+            raise HTTPException(
+                status_code=500,
+                detail=f"Could not read '{filename}'. {str(e)}"
+            )
+
+    def _extract_from_txt(self, file_content: bytes) -> str:
+        """Extract text from TXT files with encoding detection."""
+        encodings = ['utf-8', 'latin-1', 'cp1252', 'iso-8859-1']
+        
+        for encoding in encodings:
+            try:
+                return file_content.decode(encoding)
+            except UnicodeDecodeError:
+                continue
+                
+        # If all encodings fail, use utf-8 with error handling
+        return file_content.decode('utf-8', errors='ignore')
 
     def _extract_from_pdf(self, file_content: bytes) -> str:
-        # Using pdfplumber first
+        """Extract text from PDF files (runs in thread pool)."""
+        # Try pdfplumber first (better text extraction)
         try:
             with pdfplumber.open(BytesIO(file_content)) as pdf:
-                # Encryption check
+                # Check for encrypted/empty PDFs
                 if not pdf.pages:
-                     raise ValueError("PDF has no readable pages.")
-                pdf.pages[0].extract_text() # Fails if encrypted
+                    raise ValueError("PDF has no readable pages.")
                 
-                text = "".join(page.extract_text() + "\n" for page in pdf.pages if page.extract_text())
-                if text.strip():
-                    return text
+                # Test if we can read the first page (fails if encrypted)
+                first_page_text = pdf.pages[0].extract_text()
+                if first_page_text is None and len(pdf.pages) > 0:
+                    # Might be encrypted, let's check
+                    pdf.pages[0].extract_text()
+                
+                text_parts = []
+                for page in pdf.pages:
+                    page_text = page.extract_text()
+                    if page_text:
+                        text_parts.append(page_text)
+                
+                if text_parts:
+                    return "\n".join(text_parts)
+                    
         except Exception as e:
-            if any(x in str(e).lower() for x in ['password', 'encrypted']):
+            if any(keyword in str(e).lower() for keyword in ['password', 'encrypted', 'decrypt']):
                 raise ValueError("The PDF is password-protected and cannot be read.")
             logger.debug(f"pdfplumber failed, falling back to PyPDF2: {e}")
 
         # Fallback to PyPDF2
         try:
             pdf_reader = PyPDF2.PdfReader(BytesIO(file_content))
+            
             if pdf_reader.is_encrypted:
                 raise ValueError("The PDF is password-protected and cannot be read.")
             
-            text = "".join(page.extract_text() + "\n" for page in pdf_reader.pages if page.extract_text())
-            if text.strip():
+            text_parts = []
+            for page in pdf_reader.pages:
+                page_text = page.extract_text()
+                if page_text:
+                    text_parts.append(page_text)
+            
+            if text_parts:
                 logger.info("PDF extracted using PyPDF2 fallback")
-                return text
+                return "\n".join(text_parts)
+                
         except Exception as e:
+            if "password" in str(e).lower() or "encrypted" in str(e).lower():
+                raise ValueError("The PDF is password-protected and cannot be read.")
             raise ValueError("Could not extract text from PDF. The file may be corrupted or image-based.") from e
 
-        raise ValueError("Could not extract any text from the PDF.")
+        raise ValueError("Could not extract any text from the PDF. The file may be image-based or corrupted.")
 
     def _extract_from_docx(self, file_content: bytes) -> str:
+        """Extract text from DOCX files (runs in thread pool)."""
         try:
             doc = docx.Document(BytesIO(file_content))
-            all_text = [p.text for p in doc.paragraphs if p.text.strip()]
+            text_parts = []
+            
+            # Extract paragraph text
+            for paragraph in doc.paragraphs:
+                if paragraph.text.strip():
+                    text_parts.append(paragraph.text.strip())
+            
+            # Extract table text
             for table in doc.tables:
                 for row in table.rows:
-                    row_text = [cell.text.strip() for cell in row.cells if cell.text.strip()]
-                    if row_text:
-                        all_text.append(" | ".join(row_text))
+                    row_cells = []
+                    for cell in row.cells:
+                        if cell.text.strip():
+                            row_cells.append(cell.text.strip())
+                    if row_cells:
+                        text_parts.append(" | ".join(row_cells))
             
-            if not all_text:
+            if not text_parts:
                 raise ValueError("DOCX file appears empty or contains no readable text.")
-            return "\n".join(all_text)
+                
+            return "\n".join(text_parts)
+            
         except Exception as e:
-            raise ValueError("Failed to process DOCX file. It may be corrupted.") from e
+            if "corrupted" in str(e).lower() or "invalid" in str(e).lower():
+                raise ValueError("Failed to process DOCX file. It may be corrupted.") from e
+            raise ValueError(f"Failed to extract text from DOCX: {str(e)}") from e
+
+    async def process_multiple_files(self, files: list[UploadFile]) -> dict[str, str]:
+        """
+        Process multiple files concurrently.
+        
+        Args:
+            files: List of UploadFile objects
+            
+        Returns:
+            Dictionary mapping filenames to extracted text
+        """
+        async def process_single_file(file: UploadFile) -> tuple[str, str]:
+            """Process a single file and return (filename, text) tuple."""
+            try:
+                # Validate file
+                await self.validate_file(file)
+                
+                # Read content
+                content = await file.read()
+                await file.seek(0)  # Reset for potential reuse
+                
+                # Extract text
+                text = await self.extract_text_from_file(content, file.filename)
+                return file.filename, text
+                
+            except Exception as e:
+                logger.error(f"Error processing file {file.filename}: {e}")
+                return file.filename, f"Error: {str(e)}"
+
+        # Process all files concurrently
+        tasks = [process_single_file(file) for file in files]
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+        
+        # Convert results to dictionary
+        processed_files = {}
+        for result in results:
+            if isinstance(result, Exception):
+                logger.error(f"File processing error: {result}")
+                continue
+            filename, text = result
+            processed_files[filename] = text
+            
+        return processed_files
+
+    async def get_file_info(self, file: UploadFile) -> dict:
+        """
+        Get detailed information about a file.
+        
+        Args:
+            file: UploadFile object
+            
+        Returns:
+            Dictionary with file information
+        """
+        size = await self._get_file_size(file)
+        await file.seek(0)  # Reset file pointer
+        
+        return {
+            "filename": file.filename,
+            "content_type": file.content_type,
+            "size_bytes": size,
+            "size_mb": round(size / (1024 * 1024), 2),
+            "extension": os.path.splitext(file.filename)[1].lower() if file.filename else None,
+            "is_valid_type": os.path.splitext(file.filename)[1].lower() in self.VALID_EXTENSIONS if file.filename else False
+        }
+
+
+# Dependency function for FastAPI
+@lru_cache()
+def get_file_handler() -> FileHandler:
+    """
+    Dependency function to get a FileHandler instance.
+    Uses LRU cache for singleton pattern.
+    """
+    return FileHandler()
