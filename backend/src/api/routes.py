@@ -168,8 +168,8 @@ from fastapi import APIRouter, File, UploadFile, Form, HTTPException, Depends
 from fastapi.responses import JSONResponse
 
 # Import from src package
-from src.serivces.file_handler import FileHandler, get_file_handler  # Note: Directory is actually misspelled in the filesystem
-from src.serivces.analyzer import CVAnalyzer  # Note: Directory is actually misspelled in the filesystem
+from src.serivces.file_handler import FileHandler, get_file_handler  
+from src.serivces.analyzer import CVAnalyzer  
 from src.config import config
 
 logger = logging.getLogger(__name__)
