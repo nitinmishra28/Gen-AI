@@ -508,7 +508,7 @@
 
 #         #  "models": [
 #         #     "gpt-3.5-turbo",
-#         #     "gpt-4-turbo",
+#         #     "gpt-4.1",
 #         #     "gemma2:9b-instruct-q4_K_M",
 #         #     "gemma3:1b", 
 #         #     "gemini-1.5-flash"
@@ -516,7 +516,7 @@
         
 #         "models": [
 #             "gpt-3.5-turbo",
-#             "gpt-4-turbo",
+#             "gpt-4.1",
 #         ]
 #     }
 
@@ -837,7 +837,7 @@ Jane Doe""",
         
          "models": [
             "gpt-3.5-turbo",
-            "gpt-4-turbo",
+            "gpt-4.1",
             "gemma2:9b-instruct-q4_K_M",
             "gemma3:1b", 
             "gemini-1.5-flash"
